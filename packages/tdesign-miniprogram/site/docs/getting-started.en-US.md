@@ -23,7 +23,7 @@ Before using it, please make sure you have studied WeChat’s official [Simple T
 TDesign MiniProgram already supports using NPM to install third-party packages. For details, see [NPM Support](https://developers.weixin.qq.com/miniprogram/dev/devtools/npm.html?search-key=npm)
 
 ```bash
-npm i tdesign-miniprogram -S --production
+npm i tdesign-miniprogram-plus -S --production
 ```
 
 > After installation, npm needs to be built in WeChat developer tools: `tool -  build npm`.(If `NPM packages not found` appears during the build, please go to the `project.config.json` file to add the `packNpmManually` and `packNpmRelationList` configuration items. For details, see [NPM Support](https://developers.weixin.qq.com/miniprogram/dev/devtools/npm.html?search-key=npm))
@@ -45,7 +45,7 @@ If you use `typescript` to develop, you need to modify `tsconfig.json` to specif
 ```json
 {
   "paths": {
-      "tdesign-miniprogram/*":["./miniprogram/miniprogram_npm/tdesign-miniprogram/*"]
+      "tdesign-miniprogram-plus/*":["./miniprogram/miniprogram_npm/tdesign-miniprogram-plus/*"]
     }
 }
 ```
@@ -57,7 +57,7 @@ Taking the button component as an example, you only need to introduce the custom
 ```json
 {
   "usingComponents": {
-    "t-button": "tdesign-miniprogram/button/button"
+    "t-button": "tdesign-miniprogram-plus/button/button"
   }
 }
 ```

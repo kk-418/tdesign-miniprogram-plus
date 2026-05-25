@@ -22,7 +22,7 @@ spline: explain
 小程序已经支持使用 NPM 安装第三方包，详见 [NPM 支持](https://developers.weixin.qq.com/miniprogram/dev/devtools/npm.html?search-key=npm)
 
 ```bash
-npm i tdesign-miniprogram -S --production
+npm i tdesign-miniprogram-plus -S --production
 ```
 
 > 安装完之后，需要在微信开发者工具中对 npm 进行构建：`工具 -  构建 npm`。（构建时若出现`NPM packages not found`字样，请到 `project.config.json` 文件补充 `packNpmManually` 和 `packNpmRelationList` 配置项，具体见[NPM 支持](https://developers.weixin.qq.com/miniprogram/dev/devtools/npm.html?search-key=npm)）
@@ -44,7 +44,7 @@ npm i tdesign-miniprogram -S --production
 ```json
 {
   "paths": {
-      "tdesign-miniprogram/*":["./miniprogram/miniprogram_npm/tdesign-miniprogram/*"]
+      "tdesign-miniprogram-plus/*":["./miniprogram/miniprogram_npm/tdesign-miniprogram-plus/*"]
     }
 }
 ```
@@ -56,7 +56,7 @@ npm i tdesign-miniprogram -S --production
 ```json
 {
   "usingComponents": {
-    "t-button": "tdesign-miniprogram/button/button"
+    "t-button": "tdesign-miniprogram-plus/button/button"
   }
 }
 ```
