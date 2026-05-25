@@ -25,10 +25,39 @@
 
 - **完全兼容原版**：组件 API、引用路径、用法与官方一致，可平滑替换 —— 把依赖与引用里的 `tdesign-miniprogram` 换成 `tdesign-miniprogram-plus` 即可。
 - **持续同步上游**：版本号采用 `x.y.z-plus.N` 格式，其中 `x.y.z` 即对应的官方版本（例如 `1.15.0-plus.1` 表示基于官方 `1.15.0`）。
-- **相比官方新增的功能**：
-  - `Cascader` 级联选择器支持 `filterable` 搜索（关键词筛选 + 搜索结果路径展示）。
 
 如需官方原版，请前往 [Tencent/tdesign-miniprogram](https://github.com/Tencent/tdesign-miniprogram)。
+
+## 基于官方的改造
+
+下面列出本项目相比官方 `tdesign-miniprogram` 的增量改造，均为**新增能力**，不改变官方既有属性的默认行为。
+
+### Cascader 级联选择器：新增搜索能力（`filterable`）
+
+官方 `Cascader` 仅支持逐级点选，本项目为其新增关键词搜索：开启 `filterable` 后顶部出现搜索框，输入关键字时层级面板切换为**扁平的匹配路径列表**，直接定位目标项；清空关键字则恢复正常层级选择。
+
+新增属性：
+
+| 属性 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `filterable` | `Boolean` | `false` | 是否可搜索。开启后顶部展示搜索框，输入关键字将层级面板切换为扁平的匹配路径列表 |
+| `filter` | `Function` | - | 自定义过滤函数，返回 `true` 表示匹配。签名 `(keyword, option, path) => boolean`；缺省时使用大小写不敏感的内置匹配（命中路径中任一 label 或叶子节点文本） |
+| `filter-placeholder` | `String` | - | 搜索框占位文案，缺省回退到全局语言包 |
+
+用法示例：
+
+```html
+<t-cascader
+  visible="{{visible}}"
+  value="{{value}}"
+  options="{{options}}"
+  filterable
+  filter-placeholder="搜索地区"
+  bind:change="onChange"
+/>
+```
+
+> 配套新增了 `--td-cascader-filter-*` 系列 CSS 变量用于定制搜索结果列表样式，详见组件文档。
 
 [TDesign](https://github.com/Tencent/tdesign) 适配微信小程序的组件库。
 
