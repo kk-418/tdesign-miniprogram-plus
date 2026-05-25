@@ -5,6 +5,16 @@ toc: false
 docClass: timeline
 ---
 
+## 🌈 1.15.0-plus.1 `2026-05-25`
+
+> 基于官方 `tdesign-miniprogram@1.15.0` 的派生增强版（`tdesign-miniprogram-plus`），完全兼容原版，以下为相比官方的增量。
+
+### 🚀 Features
+
+- `Cascader`: 新增 `filterable` 属性，支持关键词搜索筛选与搜索结果路径展示
+
+---
+
 ## 🌈 1.15.0 `2026-05-21`
 
 ### 🚀 Features

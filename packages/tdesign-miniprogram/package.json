@@ -1,8 +1,8 @@
 {
-  "name": "tdesign-miniprogram",
-  "version": "1.15.0",
-  "title": "tdesign-miniprogram",
-  "description": "TDesign Component for miniprogram",
+  "name": "tdesign-miniprogram-plus",
+  "version": "1.15.0-plus.1",
+  "title": "tdesign-miniprogram-plus",
+  "description": "基于 tdesign-miniprogram 的派生增强版，完全兼容原版并提供增量功能",
   "main": "miniprogram_dist/index.js",
   "miniprogram": "miniprogram_dist",
   "keywords": [
@@ -18,12 +18,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Tencent/tdesign-miniprogram.git",
+    "url": "git+https://github.com/kk-418/tdesign-miniprogram-plus.git",
     "directory": "packages/tdesign-miniprogram"
   },
-  "homepage": "https://tdesign.tencent.com/miniprogram",
+  "homepage": "https://github.com/kk-418/tdesign-miniprogram-plus",
   "bugs": {
-    "url": "https://github.com/Tencent/tdesign-miniprogram/issues"
+    "url": "https://github.com/kk-418/tdesign-miniprogram-plus/issues"
   },
   "author": "tdesign",
   "license": "MIT",
