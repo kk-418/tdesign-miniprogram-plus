@@ -1,6 +1,6 @@
 {
   "name": "tdesign-miniprogram-plus",
-  "version": "1.15.0-plus.1",
+  "version": "1.15.0-plus.2",
   "title": "tdesign-miniprogram-plus",
   "description": "基于 tdesign-miniprogram 的派生增强版，完全兼容原版并提供增量功能",
   "main": "miniprogram_dist/index.js",
