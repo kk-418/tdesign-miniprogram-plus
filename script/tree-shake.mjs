@@ -9,23 +9,26 @@
  * 所以必须物理删文件。
  *
  * 用法：
- *   node script/tree-shake.mjs --app <appMiniprogramDir> --dist <distDir> [--dry-run]
+ *   node script/tree-shake.mjs --app <appMiniprogramDir> --dist <distDir> [--lib <pkgName>] [--dry-run] [--force]
  *
  *   --app      下游小程序源码根目录（含 app.json / pages / components 的 .json）
  *   --dist     要裁剪的 tdesign dist 目录（原地删文件）
+ *   --lib      组件库 npm 包名（默认 tdesign-miniprogram-plus，用于识别带库名前缀的引用）
  *   --dry-run  只打印将删除/保留清单，不真正删
+ *   --force    跳过"根集为空"安全护栏（谨慎使用，可能删光整个 dist）
  *
  * 算法：
  *   1. 求根集：扫描 app 下所有 .json（排除其 miniprogram_npm/）的 usingComponents /
  *      componentGenerics，凡 value 解析后落在 dist 内的，取其顶层组件目录名为根。
+ *      根集为空时默认中止（防止误删整个库），可用 --force 强制继续。
  *   2. BFS 求传递闭包：读 dist 内组件 json 的 usingComponents/componentGenerics，
  *      把指向其它 tdesign 组件的相对路径解析进集合，迭代到不动点。
  *   3. 始终保留共享目录：common / mixins / locale / config-provider。
  *   4. 内嵌依赖：扫描"保留组件目录 + 共享目录"内的 @import(wxss) / <wxs src>(wxml) /
- *      require|import(js) 对 dist 根下其它顶层目录/文件（含 miniprogram_npm/<lib>）的引用，
+ *      require|import|动态 import(js) 对 dist 根下其它顶层目录/文件（含 miniprogram_npm/<lib>）的引用，
  *      被引用项加入保留集，迭代到不动点（保守：宁可多留不可错删）。
- *      其中 common/shared/<name> 子目录视为组件 <name> 的私有共享代码，仅当 <name> 被保留时才保留。
- *   5. 删除 dist 顶层中不在保留集的目录；删除开发期冗余文件（.wechatide.ib.json）；
+ *      common/shared/<name> 子目录的保留按"与保留组件同名 ∪ 被保留文件真实引用"判定。
+ *   5. 删除 dist 顶层中不在保留集的目录；删除任意层级的开发期冗余文件（.wechatide.ib.json）；
  *      保留 dist 根下的 .json/索引/注册清单等工具文件。
  *
  * 仅用 Node 内置模块，node 直接可跑。
@@ -39,12 +42,14 @@ import process from 'node:process';
 // CLI 解析
 // ---------------------------------------------------------------------------
 function parseArgs(argv) {
-  const args = { app: '', dist: '', dryRun: false };
+  const args = { app: '', dist: '', dryRun: false, force: false, lib: 'tdesign-miniprogram-plus' };
   for (let i = 0; i < argv.length; i += 1) {
     const a = argv[i];
     if (a === '--app') args.app = argv[++i];
     else if (a === '--dist') args.dist = argv[++i];
+    else if (a === '--lib') args.lib = argv[++i];
     else if (a === '--dry-run' || a === '--dryRun') args.dryRun = true;
+    else if (a === '--force') args.force = true;
     else if (a === '-h' || a === '--help') args.help = true;
   }
   return args;
@@ -52,21 +57,22 @@ function parseArgs(argv) {
 
 function usage() {
   console.log(
-    'Usage: node script/tree-shake.mjs --app <appMiniprogramDir> --dist <distDir> [--dry-run]',
+    'Usage: node script/tree-shake.mjs --app <appMiniprogramDir> --dist <distDir> [--lib <pkgName>] [--dry-run] [--force]',
   );
 }
 
 // 始终保留的共享目录（顶层目录名）
 const ALWAYS_KEEP = new Set(['common', 'mixins', 'locale', 'config-provider']);
 
-// dist 根下永远保留的工具文件（注册清单 / 入口 / 类型）
-const ROOT_KEEP_FILE_EXT = new Set(['.json', '.js', '.ts', '.map', '.wxs', '.wxss']);
-
 // 开发期冗余文件名（位于任意层级，删除）
 const REDUNDANT_FILE_NAMES = new Set(['.wechatide.ib.json']);
 
 // 内嵌 npm 容器目录名
 const EMBED_NPM_DIR = 'miniprogram_npm';
+
+// 显式带库名前缀的引用 marker（运行时由 --lib 填充，main() 中设置）。
+// 同时兼容 plus 与非 plus 包名，与头注释 tdesign-miniprogram(-plus) 对齐。
+let LIB_MARKERS = ['tdesign-miniprogram-plus/', 'tdesign-miniprogram/'];
 
 const log = (...m) => console.log(...m);
 const warn = (...m) => console.warn('[warn]', ...m);
@@ -133,25 +139,6 @@ function readTextSafe(file) {
   }
 }
 
-function dirSizeBytes(p) {
-  let total = 0;
-  if (isDir(p)) {
-    for (const f of walkFiles(p)) {
-      try {
-        total += fs.statSync(f).size;
-      } catch {
-        /* ignore */
-      }
-    }
-  } else {
-    try {
-      total += fs.statSync(p).size;
-    } catch {
-      /* ignore */
-    }
-  }
-  return total;
-}
 const kb = (bytes) => (bytes / 1024).toFixed(1);
 
 /**
@@ -165,12 +152,13 @@ function resolveTopLevelEntry(distRoot, fromFile, ref) {
   // 去掉协议/网络组件占位
   if (ref.startsWith('plugin://') || ref.startsWith('plugin-private://')) return null;
 
-  // 显式带库名前缀：.../tdesign-miniprogram-plus/<comp>/...
-  const marker = 'tdesign-miniprogram-plus/';
-  const mi = ref.indexOf(marker);
-  if (mi !== -1) {
-    const rest = ref.slice(mi + marker.length);
-    return firstSegment(rest);
+  // 显式带库名前缀：.../<lib>/<comp>/...（兼容 plus / 非 plus）
+  for (const marker of LIB_MARKERS) {
+    const mi = ref.indexOf(marker);
+    if (mi !== -1) {
+      const rest = ref.slice(mi + marker.length);
+      return firstSegment(rest);
+    }
   }
 
   let abs;
@@ -211,6 +199,29 @@ function firstSegment(p) {
   const clean = p.replace(/^[./]+/, '');
   const seg = clean.split('/')[0];
   return seg || null;
+}
+
+/**
+ * 若引用解析后落在 dist/common/shared/<name> 内，返回 <name>，否则 null。
+ * 用于让 shared 子目录的保留按"真实被引用"判定，而非纯组件同名匹配。
+ */
+function resolveSharedSubdir(distRoot, fromFile, ref) {
+  if (!ref || typeof ref !== 'string') return null;
+  let abs;
+  if (ref.startsWith('.')) {
+    abs = path.resolve(path.dirname(fromFile), ref);
+  } else if (ref.startsWith('/')) {
+    if (ref.startsWith(distRoot + path.sep)) abs = ref;
+    else return null;
+  } else {
+    return null;
+  }
+  const sharedRoot = path.join(path.resolve(distRoot), 'common', 'shared');
+  const norm = path.resolve(abs);
+  if (norm !== sharedRoot && !norm.startsWith(sharedRoot + path.sep)) return null;
+  const rel = path.relative(sharedRoot, norm);
+  if (!rel || rel.startsWith('..')) return null;
+  return rel.split(path.sep)[0] || null;
 }
 
 // ---------------------------------------------------------------------------
@@ -281,94 +292,113 @@ function expandComponentClosure(distRoot, roots) {
 // ---------------------------------------------------------------------------
 // 步骤 4：内嵌依赖闭包（保留文件对 dist 根下其它顶层条目/内嵌 npm 的引用）
 // ---------------------------------------------------------------------------
-const IMPORT_RE = /(?:require\(|import\s+[^'"]*from\s+|import\s+|@import\s+|<wxs[^>]*\bsrc\s*=\s*)['"]([^'"]+)['"]/g;
+const IMPORT_RE =
+  /(?:require\s*\(|import\s*\(|import\s+[^'"]*from\s+|import\s+|@import\s+|<wxs[^>]*\bsrc\s*=\s*)['"]([^'"]+)['"]/g;
 const WXS_SRC_RE = /\bsrc\s*=\s*['"]([^'"]+)['"]/g;
 
 function scanFileRefs(distRoot, file) {
   const text = readTextSafe(file);
   const tops = new Set();
+  const shared = new Set();
+  const take = (ref) => {
+    const top = resolveTopLevelEntry(distRoot, file, ref);
+    if (top) tops.add(top);
+    const sub = resolveSharedSubdir(distRoot, file, ref);
+    if (sub) shared.add(sub);
+  };
   let m;
   IMPORT_RE.lastIndex = 0;
-  while ((m = IMPORT_RE.exec(text)) !== null) {
-    const top = resolveTopLevelEntry(distRoot, file, m[1]);
-    if (top) tops.add(top);
-  }
+  while ((m = IMPORT_RE.exec(text)) !== null) take(m[1]);
   // wxml 里的 <wxs src> 与 <import src>，单独扫一遍 src=
   if (file.endsWith('.wxml')) {
     WXS_SRC_RE.lastIndex = 0;
-    while ((m = WXS_SRC_RE.exec(text)) !== null) {
-      const top = resolveTopLevelEntry(distRoot, file, m[1]);
-      if (top) tops.add(top);
-    }
+    while ((m = WXS_SRC_RE.exec(text)) !== null) take(m[1]);
   }
-  return tops;
+  return { tops, shared };
+}
+
+/** 列出 common/shared 下所有子目录名 */
+function listSharedSubdirs(distRoot) {
+  const sharedRoot = path.join(distRoot, 'common', 'shared');
+  if (!isDir(sharedRoot)) return [];
+  return fs
+    .readdirSync(sharedRoot, { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => e.name);
 }
 
 /**
- * 计算 common/shared 下应保留的子目录：仅保留属于已保留组件的 shared/<name>。
- * 返回需要从扫描/保留中排除的 common/shared/<name> 绝对目录集合。
+ * 内嵌依赖闭包（迭代到不动点）。同时计算：
+ *  - keptTop：需保留的 dist 顶层条目（含 miniprogram_npm/<lib>）
+ *  - keptShared：需保留的 common/shared/<name> 子目录名
+ * shared 子目录保留判定 = 与保留组件同名（初始假设） ∪ 被保留文件真实 @import/require 引用到。
+ * 扫描时 common/shared 仅扫"已判定保留"的子目录，其余 shared 子目录不参与（避免被删代码反向拉回依赖）。
  */
-function sharedSubdirsToDrop(distRoot, keptComponents) {
-  const dropAbs = new Set();
-  const sharedRoot = path.join(distRoot, 'common', 'shared');
-  if (!isDir(sharedRoot)) return dropAbs;
-  for (const e of fs.readdirSync(sharedRoot, { withFileTypes: true })) {
-    if (!e.isDirectory()) continue;
-    if (!keptComponents.has(e.name)) dropAbs.add(path.join(sharedRoot, e.name));
-  }
-  return dropAbs;
-}
-
-function expandEmbedClosure(distRoot, keptComponents, sharedDrop) {
+function expandEmbedClosure(distRoot, keptComponents) {
   // 起始保留集 = 保留组件 + 始终保留目录
   const keptTop = new Set(keptComponents);
   for (const k of ALWAYS_KEEP) {
     if (isDir(path.join(distRoot, k))) keptTop.add(k);
   }
 
-  // 待扫描文件：保留组件目录 + 始终保留目录（排除将被删除的 common/shared/<name>）
-  const scanDirs = new Set();
-  for (const k of keptTop) scanDirs.add(path.join(distRoot, k));
+  const allShared = listSharedSubdirs(distRoot);
+  // 初始保留的 shared 子目录：与保留组件同名
+  const keptShared = new Set(allShared.filter((n) => keptComponents.has(n)));
+  const sharedRoot = path.join(distRoot, 'common', 'shared');
 
+  // 待扫描目录（顶层），common 目录单独按 keptShared 细粒度处理
+  const scanDirs = new Set();
+  for (const k of keptTop) {
+    if (k !== 'common') scanDirs.add(path.join(distRoot, k));
+  }
+
+  // 收集本轮待扫描文件：scanDirs 全量 + common 下"非 shared 内容 + keptShared 子目录"
   const collectFiles = () => {
     const files = [];
     for (const d of scanDirs) {
       if (!isDir(d)) continue;
-      for (const f of walkFiles(d)) {
-        // 跳过将被删除的 common/shared/<name> 内文件
-        let skip = false;
-        for (const dd of sharedDrop) {
-          if (f === dd || f.startsWith(dd + path.sep)) {
-            skip = true;
-            break;
-          }
-        }
-        if (!skip) files.push(f);
+      files.push(...walkFiles(d));
+    }
+    const commonDir = path.join(distRoot, 'common');
+    if (isDir(commonDir)) {
+      // common 下除 shared 外的内容
+      files.push(...walkFiles(commonDir, new Set([sharedRoot])));
+      // 仅保留的 shared 子目录
+      for (const name of keptShared) {
+        const sub = path.join(sharedRoot, name);
+        if (isDir(sub)) files.push(...walkFiles(sub));
       }
     }
     return files;
   };
 
-  // 迭代到不动点：被引用的顶层条目（含 miniprogram_npm/<lib>）加入保留，并把其目录纳入下一轮扫描
+  // 迭代到不动点
   let changed = true;
   while (changed) {
     changed = false;
     const files = collectFiles();
     for (const f of files) {
-      for (const top of scanFileRefs(distRoot, f)) {
+      const { tops, shared } = scanFileRefs(distRoot, f);
+      for (const top of tops) {
         if (!keptTop.has(top)) {
           keptTop.add(top);
           changed = true;
         }
         const topDir = path.join(distRoot, top);
-        if (isDir(topDir) && !scanDirs.has(topDir)) {
+        if (topDir !== path.join(distRoot, 'common') && isDir(topDir) && !scanDirs.has(topDir)) {
           scanDirs.add(topDir);
+          changed = true;
+        }
+      }
+      for (const name of shared) {
+        if (allShared.includes(name) && !keptShared.has(name)) {
+          keptShared.add(name);
           changed = true;
         }
       }
     }
   }
-  return keptTop;
+  return { keptTop, keptShared };
 }
 
 // ---------------------------------------------------------------------------
@@ -392,8 +422,12 @@ function main() {
     process.exit(1);
   }
 
+  // 库名前缀 marker：用户指定的 --lib + 兜底兼容（plus / 非 plus）
+  LIB_MARKERS = [...new Set([`${args.lib}/`, 'tdesign-miniprogram-plus/', 'tdesign-miniprogram/'])];
+
   log(`app  = ${appDir}`);
   log(`dist = ${distRoot}`);
+  log(`lib  = ${args.lib}`);
   log(`mode = ${args.dryRun ? 'DRY-RUN（不删文件）' : 'DELETE（真正删除）'}`);
   log('');
 
@@ -401,17 +435,33 @@ function main() {
   const roots = collectRootComponents(appDir, distRoot);
   // 2. 组件传递闭包
   const keptComponents = expandComponentClosure(distRoot, roots);
-  // common/shared 子目录裁剪
-  const sharedDrop = sharedSubdirsToDrop(distRoot, keptComponents);
-  // 4. 内嵌依赖闭包（含 miniprogram_npm/<lib>）
-  const keptTop = expandEmbedClosure(distRoot, keptComponents, sharedDrop);
+
+  // 安全护栏：根集为空说明 --app 路径/包名很可能配错，继续执行会删光整个库
+  if (keptComponents.size === 0 && !args.force) {
+    console.error(
+      `[error] 未从 --app 解析到任何落在 dist 内的 tdesign 组件引用（根集为空）。\n` +
+        `        这通常意味着 --app 路径不对、--lib 包名不匹配，或 app 未使用该库。\n` +
+        `        为避免误删整个 dist，已中止。确认无误可加 --force 强制执行。`,
+    );
+    process.exit(1);
+  }
+
+  // 4. 内嵌依赖闭包（含 miniprogram_npm/<lib>）+ shared 子目录保留判定
+  const { keptTop, keptShared } = expandEmbedClosure(distRoot, keptComponents);
+
+  // common/shared 待删子目录 = 全部 shared 子目录 - 已判定保留
+  const sharedRoot = path.join(distRoot, 'common', 'shared');
+  const sharedDrop = new Set(
+    listSharedSubdirs(distRoot)
+      .filter((n) => !keptShared.has(n))
+      .map((n) => path.join(sharedRoot, n)),
+  );
 
   // dist 顶层条目
   const topEntries = fs.readdirSync(distRoot, { withFileTypes: true });
 
   const keepDirs = [];
   const deleteDirs = [];
-  const keepRootFiles = [];
   const deleteRootFiles = [];
 
   for (const e of topEntries) {
@@ -422,11 +472,17 @@ function main() {
       }
       if (ALWAYS_KEEP.has(e.name) || keptTop.has(e.name)) keepDirs.push(e.name);
       else deleteDirs.push(e.name);
-    } else if (e.isFile()) {
-      if (REDUNDANT_FILE_NAMES.has(e.name)) deleteRootFiles.push(e.name);
-      else if (ROOT_KEEP_FILE_EXT.has(path.extname(e.name)) || e.name.startsWith('index'))
-        keepRootFiles.push(e.name);
-      else keepRootFiles.push(e.name); // 默认保留根级工具文件
+    } else if (e.isFile() && REDUNDANT_FILE_NAMES.has(e.name)) {
+      // 根级冗余文件删除；其余根级工具文件（.json/.js/.ts/索引等）一律保留
+      deleteRootFiles.push(e.name);
+    }
+  }
+
+  // #2：保留目录内任意层级的开发期冗余文件也要删（顶层遍历覆盖不到嵌套层）
+  const nestedRedundant = [];
+  for (const d of keepDirs) {
+    for (const f of walkFiles(path.join(distRoot, d))) {
+      if (REDUNDANT_FILE_NAMES.has(path.basename(f))) nestedRedundant.push(f);
     }
   }
 
@@ -449,10 +505,29 @@ function main() {
   let deletedBytes = 0;
   let deletedFiles = 0;
   const tally = (p) => {
-    deletedBytes += dirSizeBytes(p);
-    if (isDir(p)) deletedFiles += walkFiles(p).length;
-    else deletedFiles += 1;
+    // 单次遍历同时累加大小与文件数（避免对每个目标重复 walk）
+    if (isDir(p)) {
+      for (const f of walkFiles(p)) {
+        deletedFiles += 1;
+        try {
+          deletedBytes += fs.statSync(f).size;
+        } catch {
+          /* ignore */
+        }
+      }
+    } else {
+      deletedFiles += 1;
+      try {
+        deletedBytes += fs.statSync(p).size;
+      } catch {
+        /* ignore */
+      }
+    }
   };
+
+  const totalComponentDirs = topEntries.filter(
+    (e) => e.isDirectory() && e.name !== EMBED_NPM_DIR && !ALWAYS_KEEP.has(e.name),
+  ).length;
 
   log('=== 保留组件闭包 (' + keptComponents.size + ') ===');
   log([...keptComponents].sort().join(', '));
@@ -475,6 +550,19 @@ function main() {
   log('=== 将删除根级冗余文件 ===');
   log(deleteRootFiles.join(', ') || '(无)');
   log('');
+  log('=== 将删除嵌套冗余文件 (' + nestedRedundant.length + ') ===');
+  log(
+    nestedRedundant
+      .map((f) => path.relative(distRoot, f))
+      .sort()
+      .join(', ') || '(无)',
+  );
+  log('');
+  log(
+    `=== 删除占比：组件目录 ${deleteDirs.length}/${totalComponentDirs}` +
+      `，内嵌 npm ${embedDelete.length}/${embedKeep.length + embedDelete.length} ===`,
+  );
+  log('');
 
   // 收集待删绝对路径
   const targets = [];
@@ -482,6 +570,7 @@ function main() {
   for (const e of embedDelete) targets.push(path.join(embedRoot, e));
   for (const s of sharedDrop) targets.push(s);
   for (const f of deleteRootFiles) targets.push(path.join(distRoot, f));
+  for (const f of nestedRedundant) targets.push(f);
 
   for (const t of targets) tally(t);
 
@@ -499,10 +588,11 @@ function main() {
     }
   }
 
-  // 删除后统计 dist 剩余
-  const remainFiles = walkFiles(distRoot).length;
+  // 删除后统计 dist 剩余（单次遍历）
+  let remainFiles = 0;
   let remainBytes = 0;
   for (const f of walkFiles(distRoot)) {
+    remainFiles += 1;
     try {
       remainBytes += fs.statSync(f).size;
     } catch {
