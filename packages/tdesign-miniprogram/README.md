@@ -59,6 +59,22 @@
 
 > 配套新增了 `--td-cascader-filter-*` 系列 CSS 变量用于定制搜索结果列表样式，详见组件文档。
 
+### 组件依赖闭包裁剪脚本（物理 tree-shaking）
+
+官方未提供按需裁剪能力：即便开启 `lazyCodeLoading: "requiredComponents"` 也只优化启动注入，并不减小 `miniprogram_npm` 包体积。本项目新增 `script/tree-shake.mjs`，按下游小程序**实际引用到的组件**对全量 dist 做物理裁剪 —— 计算依赖闭包后删除未引用的组件目录与开发期冗余文件，显著减小打包体积。
+
+特性：
+
+- **依赖闭包分析**：从 app 各 `.json` 的 `usingComponents` 求根集，BFS 解析组件间相对引用至不动点；并扫描 `@import`(wxss)、`<wxs src>`(wxml)、`require/import`(js) 的内嵌依赖，保守保留（宁可多留不错删）。
+- **安全护栏**：始终保留 `common`/`mixins`/`locale`/`config-provider` 共享目录；根集为空时默认中止以防误删整库，`--dry-run` 仅预览、`--force` 强制执行。
+- **零依赖**：仅用 Node 内置模块，`node` 直接可跑。
+
+用法：
+
+```bash
+node script/tree-shake.mjs --app <小程序源码根目录> --dist <tdesign dist 目录> [--lib tdesign-miniprogram-plus] [--dry-run] [--force]
+```
+
 [TDesign](https://github.com/Tencent/tdesign) 适配微信小程序的组件库。
 
 ## 预览
