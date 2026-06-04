@@ -8,8 +8,9 @@
  * 背景：app.json 即使开启 lazyCodeLoading:"requiredComponents" 也只优化启动注入、不减包体积，
  * 所以必须物理删文件。
  *
- * 用法：
- *   node script/tree-shake.mjs --app <appMiniprogramDir> --dist <distDir> [--lib <pkgName>] [--dry-run] [--force]
+ * 用法（随 tdesign-miniprogram-plus 包发布，bin 名 tdesign-prune）：
+ *   npx tdesign-prune --app <appMiniprogramDir> --dist <distDir> [--lib <pkgName>] [--dry-run] [--force]
+ *   # 或直接：node tree-shake.mjs --app ... --dist ...
  *
  *   --app      下游小程序源码根目录（含 app.json / pages / components 的 .json）
  *   --dist     要裁剪的 tdesign dist 目录（原地删文件）
@@ -57,7 +58,7 @@ function parseArgs(argv) {
 
 function usage() {
   console.log(
-    'Usage: node script/tree-shake.mjs --app <appMiniprogramDir> --dist <distDir> [--lib <pkgName>] [--dry-run] [--force]',
+    'Usage: npx tdesign-prune --app <appMiniprogramDir> --dist <distDir> [--lib <pkgName>] [--dry-run] [--force]',
   );
 }
 

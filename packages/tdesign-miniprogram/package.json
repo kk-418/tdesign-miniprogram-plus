@@ -1,16 +1,20 @@
 {
   "name": "tdesign-miniprogram-plus",
-  "version": "1.15.0-plus.2",
+  "version": "1.15.0-plus.3",
   "title": "tdesign-miniprogram-plus",
   "description": "基于 tdesign-miniprogram 的派生增强版，完全兼容原版并提供增量功能",
   "main": "miniprogram_dist/index.js",
   "miniprogram": "miniprogram_dist",
+  "bin": {
+    "tdesign-prune": "tree-shake.mjs"
+  },
   "keywords": [
     "tdesign",
     "miniprogram"
   ],
   "files": [
     "miniprogram_dist",
+    "tree-shake.mjs",
     "CHANGELOG.md"
   ],
   "publishConfig": {
